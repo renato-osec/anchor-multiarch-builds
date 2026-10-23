@@ -11,6 +11,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG SOLANA_CLI
 ARG ANCHOR_CLI
 ARG NODE_VERSION="v22.12.0"
+ARG TARGETARCH
 
 ENV HOME="/root"
 ENV PATH="${HOME}/.cargo/bin:${PATH}"
@@ -37,13 +38,31 @@ RUN . $NVM_DIR/nvm.sh && \
     nvm alias default node && \
     npm install -g yarn
 
-# Install Solana tools.
-RUN sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_CLI}/install)"
+# Install Solana tools. Agave has no Linux arm64 release, so arm64 gets only the
+# `cargo-build-sbf` that SOLANA_CLI pins and the platform-tools that the CLI's
+# BUILD_SUBCOMMAND pins, with the x86_64 package's SBF sysroot: the two packages
+# ship differently built standard libraries, which changes every program.
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+        cargo install --locked cargo-build-sbf --version 4.1.0 && \
+        tools="${HOME}/.cache/solana/v1.52/platform-tools" && \
+        url="https://github.com/anza-xyz/platform-tools/releases/download/v1.52" && \
+        mkdir -p "${tools}" && \
+        curl -sSfL "${url}/platform-tools-linux-aarch64.tar.bz2" | tar xj -C "${tools}" && \
+        rm -rf "${tools}"/rust/lib/rustlib/sb*-solana-solana && \
+        curl -sSfL "${url}/platform-tools-linux-x86_64.tar.bz2" | \
+            tar xj -C "${tools}" --wildcards './rust/lib/rustlib/sb*-solana-solana'; \
+    else \
+        sh -c "$(curl -sSfL https://release.anza.xyz/${SOLANA_CLI}/install)"; \
+    fi
 
 # Install anchor.
 RUN cargo install --git https://github.com/otter-sec/anchor --tag ${ANCHOR_CLI} anchor-cli --locked
 
+# Make SBF builds independent of the image architecture.
+COPY sbf-rustc-wrapper /usr/local/bin/sbf-rustc-wrapper
+ENV RUSTC_WRAPPER="/usr/local/bin/sbf-rustc-wrapper"
+
 # Build a dummy program to bootstrap the BPF SDK (doing this speeds up builds).
-RUN mkdir -p /tmp && cd tmp && anchor init dummy && cd dummy && anchor build
+RUN mkdir -p /tmp && cd tmp && anchor init dummy && cd dummy && anchor build --no-idl
 
 WORKDIR /workdir

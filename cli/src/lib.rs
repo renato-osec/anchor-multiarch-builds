@@ -2361,13 +2361,15 @@ fn docker_build(
     // Start the docker image running detached in the background.
     let target_dir = workdir.join("docker-target");
     println!("Run docker image");
-    let exit = std::process::Command::new("docker")
+    let mut docker_run = std::process::Command::new("docker");
+    docker_run.args(["run", "-it", "-d", "--name", container_name]);
+    // `docker_prep` installs `solana_version` with Anza's installer, which only
+    // ships x86_64 Linux binaries.
+    if build_config.solana_version.is_some() {
+        docker_run.args(["--platform", "linux/amd64"]);
+    }
+    let exit = docker_run
         .args([
-            "run",
-            "-it",
-            "-d",
-            "--name",
-            container_name,
             "--env",
             &format!(
                 "CARGO_TARGET_DIR={}",

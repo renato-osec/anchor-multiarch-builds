@@ -1,0 +1,30 @@
+#!/bin/bash
+#
+# RUSTC_WRAPPER that gives SBF crates a `-C metadata` hashed from their own
+# inputs. Cargo's hash covers the host triple and host-only dependencies of
+# proc-macros and build scripts, and it orders generic instances in `.text`, so
+# arm64 and amd64 images would otherwise build different programs.
+#
+
+rustc="$1"
+shift
+args=("$@")
+
+target=""
+key=()
+for ((i = 0; i < ${#args[@]}; i++)); do
+    case "${args[i]}" in
+    --target) target="${args[i + 1]}" ;;
+    --crate-name | --crate-type | --cfg) key+=("${args[i]}" "${args[i + 1]}") ;;
+    *.rs) key+=("${args[i]}") ;;
+    esac
+done
+
+if [[ "$target" == sbpf* ]]; then
+    metadata="metadata=$(printf '%s\0' "${key[@]}" | sha256sum | cut -c1-16)"
+    for ((i = 1; i < ${#args[@]}; i++)); do
+        [[ "${args[i - 1]}" == -C && "${args[i]}" == metadata=* ]] && args[i]="$metadata"
+    done
+fi
+
+exec "$rustc" "${args[@]}"
